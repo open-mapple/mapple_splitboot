@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025-2026 the HakiOS authors
 """
 Put a bare-metal program in front of Android's kernel in a boot image (header v2).
 
