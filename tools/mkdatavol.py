@@ -23,12 +23,11 @@ Case-sensitive (HFSX), as Darwin's own data volume is, and journaled.
     mkdatavol.py --dd OUTDIR VOLUME DARWIN_BLOCKS FIRST
 
 The same volume for a phone without fastboot (the realme 8i: darwin 3145976 blocks, the volume from 1049088, past
-the var store's slots and the kernel's breadcrumbs), from VOLUME, an image of exactly DARWIN_BLOCKS - FIRST blocks of 4096 that is already formatted
-(on a Mac, newfs_hfs wants a disk: attach the image with hdiutil -nomount, newfs_hfs -s -J -b 4096 -U 0 -G 0 -M 755
--v Data on its /dev/rdiskN, detach). OUTDIR gets datavol.bin, the volume's used blocks and its last one, and
-datavol.sh, which checks darwin's size and that file's SHA-256 and dd's each stretch to its place; run as root, in
-Android or a recovery: sh datavol.sh [DARWIN-DEVICE]. The same two files format the volume for development and in
-the installer.
+the var store's slots and the kernel's breadcrumbs), from VOLUME: an already formatted image of exactly
+DARWIN_BLOCKS - FIRST blocks of 4096 (on a Mac, newfs_hfs wants a disk: attach the image with hdiutil -nomount,
+newfs_hfs -s -J -b 4096 -U 0 -G 0 -M 755 -v Data on its /dev/rdiskN, detach). OUTDIR gets datavol.bin, the volume's
+used blocks and its last one, and datavol.sh, which checks darwin's size and that file's SHA-256 and dd's each
+stretch to its place; run as root, in Android or a recovery: sh datavol.sh [DARWIN-DEVICE].
 """
 import hashlib
 import os

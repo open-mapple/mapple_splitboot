@@ -32,7 +32,7 @@ static void out(const char *s) { fputs(s, stdout); }
 static void out_hex(uint64_t v) { printf("%#llx", (unsigned long long)v); }
 static void out_dec(uint64_t v) { printf("%llu", (unsigned long long)v); }
 #define PARK_PA_REAL 0x4cdff000ULL
-#define PARK_NODE "hakios-pen@4cdff000"
+#define PARK_NODE "mapple-pen@4cdff000"
 #define PARK_NODE_BYTES 68
 static uint64_t PARK_PA;        /* the room check against the end of the host's buffer instead */
 #include "fdt_part.c"
@@ -68,7 +68,7 @@ dtc -q -I dtb -O dts "$T/out.dtb" > "$T/after.dts"
 diff "$T/before.dts" "$T/after.dts" > "$T/diff" || true
 cat > "$T/want" <<'EOF'
 >
-> 		hakios-pen@4cdff000 {
+> 		mapple-pen@4cdff000 {
 > 			reg = <0x00 0x4cdff000 0x00 0x1000>;
 > 			no-map;
 > 		};

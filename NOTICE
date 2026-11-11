@@ -1,0 +1,4 @@
+SplitBoot is GPL-3.0-only (LICENSE). The files marked MIT come from HakiOS (github.com/oosexgang/hakios-xnu-kernel),
+MIT, Copyright (c) 2025-2026 the HakiOS authors; their full MIT text is in LICENSES/MIT. The files marked
+MIT AND GPL-3.0-only are HakiOS files with changes of ours: HakiOS's code in them stays MIT, the changes are
+GPL-3.0-only.

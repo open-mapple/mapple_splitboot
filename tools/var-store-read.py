@@ -17,14 +17,13 @@ that does not check out is never half used.
 
 Where it reads from, read only, either way:
   --image FILE   a copy of darwin from byte 8589934592 (dd if=/dev/block/by-name/darwin bs=4096 skip=2097152)
-  --at BYTES     where in darwin the store starts (default 8589934592; the realme 8i's: 1048576, past the MiB its
-                 configuration block keeps), first on the line
-  (default)      the phone in Android, over adb, as root: `su -c dd` of /dev/block/by-name/darwin, the blocks
-                 needed and no others. Under Git Bash on Windows as anywhere else (adb exec-out passes bytes as
-                 they are).
+  --at BYTES     where in darwin the store starts (default 8589934592; the realme 8i's is 1048576, past its
+                 configuration block's MiB); first on the line
+  (default)      the phone in Android, over adb, as root: `su -c dd` of /dev/block/by-name/darwin, only the
+                 blocks needed. Works under Git Bash on Windows too (adb exec-out passes bytes as they are).
 
-What it is for: tools/metal-cache-seed.sh takes db/hakios-metal-cache (Metal's compiled shader stages) out of
-the last run's store, so that the next image carries them and no boot compiles them again.
+tools/metal-cache-seed.sh uses it to take db/mapple-metal-cache (Metal's compiled shader stages) out of the store,
+so that the next image carries them and no boot compiles them again.
 """
 import os
 import struct
@@ -203,12 +202,12 @@ def selftest():
 
     stream = b""
     for piece in (entry(ENT_DIR, "", mode=0o755), entry(ENT_DIR, "db", mode=0o755),
-                  entry(ENT_DIR, "db/hakios-metal-cache", mode=0o755),
-                  entry(ENT_FILE, "db/hakios-metal-cache/0123.stage", b"HMCS" + bytes(range(37))),
-                  entry(ENT_FILE, "db/hakios-metal-cache/4567.stage", b"HMCS", xattrs=((b"com.x", b"yz"),)),
+                  entry(ENT_DIR, "db/mapple-metal-cache", mode=0o755),
+                  entry(ENT_FILE, "db/mapple-metal-cache/0123.stage", b"HMCS" + bytes(range(37))),
+                  entry(ENT_FILE, "db/mapple-metal-cache/4567.stage", b"HMCS", xattrs=((b"com.x", b"yz"),)),
                   entry(ENT_FILE, "db/other", b"not this one"),
-                  entry(ENT_SYMLINK, "db/hakios-metal-cache/link", b"0123.stage"),
-                  entry(ENT_DIRTIME, "db/hakios-metal-cache"), entry(ENT_DIRTIME, "db")):
+                  entry(ENT_SYMLINK, "db/mapple-metal-cache/link", b"0123.stage"),
+                  entry(ENT_DIRTIME, "db/mapple-metal-cache"), entry(ENT_DIRTIME, "db")):
         stream += piece + b"\0" * ((-len(piece)) % 8)
     def head(slot, generation, data, count=9):
         raw = HEAD.pack(MAGIC, 1, slot, generation, len(data), count, 1700000001, zlib.crc32(data) & 0xffffffff, 0)
@@ -225,7 +224,7 @@ def selftest():
         h, _ = newest_archive(src)
         failures += h is None or h["slot"] != 1
         dest = os.path.join(tmp, "out")
-        main(["x", "--image", img, "extract", "db/hakios-metal-cache", dest])
+        main(["x", "--image", img, "extract", "db/mapple-metal-cache", dest])
         got = sorted(os.listdir(dest))
         failures += got != ["0123.stage", "4567.stage"]
         failures += open(os.path.join(dest, "0123.stage"), "rb").read() != b"HMCS" + bytes(range(37))
