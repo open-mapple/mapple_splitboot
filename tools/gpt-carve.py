@@ -6,6 +6,10 @@
 Take space off the end of a partition and put new ones in its place, in a GPT read from the phone:
 
   gpt-carve.py <gpt-primary.bin> <gpt-secondary.bin> <total-sectors> [--sector N] [NAME=GIB[:TYPE] ...]
+  gpt-carve.py <gpt-primary.bin> <gpt-secondary.bin> <total-sectors> [--sector N] --merge A B
+
+--merge: B, which must follow A directly, becomes part of A (A ends where B ended, B's entry is cleared); every other
+entry stays byte for byte as it was.
 
 Writes the new primary and secondary images beside the originals (.new), reads them back and checks them as a
 firmware would; nothing touches the phone. <gpt-primary.bin> is the first sectors of the unit (protective MBR,
@@ -88,6 +92,7 @@ def main():
     ap.add_argument("total", type=int, help="the unit's size in sectors")
     ap.add_argument("--sector", type=int, default=512, help="bytes per sector (512 eMMC, 4096 UFS)")
     ap.add_argument("new", nargs="*", default=["xnusys=4:linux"], help="NAME=GIB[:linux|apfs], in order after userdata")
+    ap.add_argument("--merge", nargs=2, metavar=("A", "B"), help="make B, right after A, part of A")
     a = ap.parse_args()
     sector, total = a.sector, a.total
     align = ALIGN_BYTES // sector
@@ -110,6 +115,8 @@ def main():
     sh, sbefore = table(sec[len(sec) - sector:], sec, off, sector, "secondary")
     assert sbefore == before, "the two copies disagree before anything is changed"
     names = [p[2] for p in before]
+    if a.merge:
+        return merge(a, pri, sec, h, before, off, sector, total)
     for nm, _, _ in wanted:
         assert nm not in names, f"{nm} is in the table already"
     print(f"{len(before)} partitions, sectors of {sector} bytes, last usable sector {h['last']}")
@@ -162,6 +169,44 @@ def main():
     open(a.secondary + ".new", "wb").write(bytes(sec))
     print(f"written and checked: {a.primary}.new (sectors 0..{len(pri) // sector - 1}), "
           f"{a.secondary}.new (sectors {total - len(sec) // sector}..{total - 1})")
+
+
+def merge(a, pri, sec, h, before, off, sector, total):
+    esz, nent = h["entsize"], h["nent"]
+    ents = pri[h["entlba"] * sector: h["entlba"] * sector + nent * esz]
+    entries = [bytearray(ents[i * esz:(i + 1) * esz]) for i in range(nent)]
+    old = [bytes(e) for e in entries]
+    ia = next(i for i, e in enumerate(entries) if name_of(e) == a.merge[0])
+    ib = next(i for i, e in enumerate(entries) if name_of(e) == a.merge[1])
+    as_, ae = struct.unpack_from("<QQ", entries[ia], 32)
+    bs, be = struct.unpack_from("<QQ", entries[ib], 32)
+    assert ae + 1 == bs, f"{a.merge[1]} ({bs}..{be}) does not follow {a.merge[0]} ({as_}..{ae}) directly"
+    around = [p[2] for p in before if p[2] in a.merge or p[2] in (SHRINK, "flashinfo")]
+    show(before, sector, "before:", around)
+
+    struct.pack_into("<Q", entries[ia], 40, be)
+    entries[ib] = bytearray(esz)
+    new_ents = b"".join(bytes(x) for x in entries)
+    pri[h["entlba"] * sector: h["entlba"] * sector + len(new_ents)] = new_ents
+    pri[sector:2 * sector] = build_header(h, new_ents, 1, total - 1, h["entlba"], sector)
+    sec_entlba = parse(sec[len(sec) - sector:])["entlba"]
+    sec[off:off + len(new_ents)] = new_ents
+    sec[len(sec) - sector:] = build_header(h, new_ents, total - 1, 1, sec_entlba, sector)
+
+    # read back and checked, both copies, as a firmware would
+    h2, after = table(pri[sector:2 * sector], pri, h["entlba"] * sector, sector, "new primary")
+    _, safter = table(sec[len(sec) - sector:], sec, off, sector, "new secondary")
+    assert after == safter, "the two new copies disagree"
+    for (s1, t1, n1, _), (s2, t2, n2, _) in zip(after, after[1:]):
+        assert t1 < s2, f"{n1} and {n2} overlap"
+    changed = [i for i in range(nent) if bytes(entries[i]) != old[i]]
+    assert changed == sorted([ia, ib]), f"entries changed beyond the two merged: {changed}"
+    assert bytes(entries[ia])[:40] == old[ia][:40] and bytes(entries[ia])[48:] == old[ia][48:], "more than A's end changed"
+    assert h2["guid"] == h["guid"] and (h2["first"], h2["last"]) == (h["first"], h["last"]), "the header changed"
+    show(after, sector, "after:", around)
+    open(a.primary + ".new", "wb").write(bytes(pri))
+    open(a.secondary + ".new", "wb").write(bytes(sec))
+    print(f"written and checked: {a.primary}.new, {a.secondary}.new")
 
 
 if __name__ == "__main__":
