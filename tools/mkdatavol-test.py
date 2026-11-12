@@ -51,5 +51,17 @@ with tempfile.TemporaryDirectory() as tmp:
             assert got == vol[v * BS:(v + 1) * BS], f'darwin block {b}: not the volume\'s block {v}'
         else:
             assert got == before[b * BS:(b + 1) * BS], f'darwin block {b}: written, and should not be'
+    # the read-back lines read exactly what was written, and their SHA-256 is the one the script expects
+    import hashlib
+    back = b''.join(bytes(darwin[int(sk) * BS:(int(sk) + int(c)) * BS])
+                    for sk, c in re.findall(r'dd if="\$D" bs=4096 skip=(\d+) count=(\d+)', script))
+    want = re.search(r'\[ "\$R" = "([0-9a-f]{64})" \]', script).group(1)
+    assert hashlib.sha256(back).hexdigest() == want == hashlib.sha256(blob).hexdigest()
+
+    # a volume smaller than the room after FIRST, into another partition: nothing after it is written
+    runs = mk.main_dd(os.path.join(tmp, 'small'), vpath, DARWIN + 7, FIRST, 'xnusys')
+    script = open(os.path.join(tmp, 'small', 'datavol.sh')).read()
+    assert 'by-name/xnusys' in script and f'= "{(DARWIN + 7) * BS}" ]' in script
+    assert max(int(sk) + int(c) for _, sk, c in re.findall(r'bs=4096 skip=(\d+) seek=(\d+) count=(\d+)', script)) == FIRST + TOTAL
 print('mkdatavol-test.py: ok')
 sys.exit(0)

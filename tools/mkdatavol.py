@@ -20,14 +20,16 @@ included: which those are is read from the volume's own allocation bitmap.
 
 Case-sensitive (HFSX), as Darwin's own data volume is, and journaled.
 
-    mkdatavol.py --dd OUTDIR VOLUME DARWIN_BLOCKS FIRST
+    mkdatavol.py --dd OUTDIR VOLUME DARWIN_BLOCKS FIRST [PARTITION]
 
 The same volume for a phone without fastboot (the realme 8i: darwin 3145976 blocks, the volume from 1049088, past
 the var store's slots and the kernel's breadcrumbs), from VOLUME: an already formatted image of exactly
 DARWIN_BLOCKS - FIRST blocks of 4096 (on a Mac, newfs_hfs wants a disk: attach the image with hdiutil -nomount,
 newfs_hfs -s -J -b 4096 -U 0 -G 0 -M 755 -v Data on its /dev/rdiskN, detach). OUTDIR gets datavol.bin, the volume's
 used blocks and its last one, and datavol.sh, which checks darwin's size and that file's SHA-256 and dd's each
-stretch to its place; run as root, in Android or a recovery: sh datavol.sh [DARWIN-DEVICE].
+stretch to its place, then reads them all back and checks their SHA-256; run as root, in Android or a recovery:
+sh datavol.sh [DEVICE]. The volume may be smaller than the room after FIRST: what follows it is not written.
+PARTITION (default darwin) names the partition: the same goes for any other, e.g. an iOS root into xnusys.
 """
 import hashlib
 import os
@@ -68,15 +70,16 @@ def used_blocks(img):
     return total, lambda b: bitmap[b >> 3] & (0x80 >> (b & 7))
 
 
-def main_dd(outdir, volume, darwin_blocks, first):
+def main_dd(outdir, volume, darwin_blocks, first, part='darwin'):
     """datavol.bin and datavol.sh in outdir; returns [(volume block, count)] in the order they are in datavol.bin"""
-    blocks = darwin_blocks - first
-    if os.path.getsize(volume) != blocks * BS:
-        sys.exit(f'mkdatavol.py: {volume} is {os.path.getsize(volume)} bytes, not {blocks} blocks of {BS}')
+    size = os.path.getsize(volume)
+    blocks = size // BS
+    if size % BS or not 0 < blocks <= darwin_blocks - first:
+        sys.exit(f'mkdatavol.py: {volume} is {size} bytes: not whole blocks of {BS} that fit in {darwin_blocks - first}')
     with open(volume, 'rb') as img:
         total, used = used_blocks(img)
         if total != blocks:
-            sys.exit(f'mkdatavol.py: the volume has {total} blocks, darwin has {blocks} for it')
+            sys.exit(f'mkdatavol.py: the volume has {total} blocks, its image {blocks}')
         runs = []
         for b in range(total):
             if used(b) or b == total - 1:               # the last block holds the alternate volume header
@@ -93,9 +96,9 @@ def main_dd(outdir, volume, darwin_blocks, first):
                 out.write(data)
                 digest.update(data)
     lines = ['#!/system/bin/sh',
-             f'# The empty data volume into darwin (tools/mkdatavol.py --dd): its blocks {first}..{darwin_blocks - 1};',
-             f'# nothing before block {first} is written. usage: sh datavol.sh [DARWIN-DEVICE]',
-             'D=${1:-/dev/block/by-name/darwin}',
+             f'# A volume into {part} (tools/mkdatavol.py --dd): its blocks {first}..{first + blocks - 1};',
+             f'# nothing outside them is written. usage: sh datavol.sh [DEVICE]',
+             f'D=${{1:-/dev/block/by-name/{part}}}',
              'H=$(dirname "$0")',
              f'[ "$(blockdev --getsize64 "$D")" = "{darwin_blocks * BS}" ] || '
              f'{{ echo "datavol.sh: $D is not {darwin_blocks * BS} bytes: nothing written"; exit 1; }}',
@@ -106,17 +109,23 @@ def main_dd(outdir, volume, darwin_blocks, first):
         lines.append(f'dd if="$H/datavol.bin" of="$D" bs={BS} skip={at} seek={first + b} count={count} '
                      'conv=notrunc,fsync 2>/dev/null || { echo "datavol.sh: dd failed"; exit 1; }')
         at += count
-    lines.append(f'echo "datavol.sh: the data volume written: {at} blocks in {len(runs)} pieces"')
+    lines.append('sync; [ -w /proc/sys/vm/drop_caches ] && echo 3 > /proc/sys/vm/drop_caches   # read the flash, not the cache')
+    lines.append('R=$( {')
+    for b, count in runs:
+        lines.append(f'dd if="$D" bs={BS} skip={first + b} count={count} 2>/dev/null')
+    lines.append('} | sha256sum | cut -d" " -f1 )')
+    lines.append(f'[ "$R" = "{digest.hexdigest()}" ] || {{ echo "datavol.sh: read back $R, not what was written"; exit 1; }}')
+    lines.append(f'echo "datavol.sh: written and read back: {at} blocks in {len(runs)} pieces, sha256 {digest.hexdigest()}"')
     with open(os.path.join(outdir, 'datavol.sh'), 'w') as f:
         f.write('\n'.join(lines) + '\n')
-    print(f'{outdir}: datavol.bin {at * BS} bytes ({at} of {blocks} blocks, {len(runs)} pieces), datavol.sh; darwin '
-          f'blocks {first}..{darwin_blocks - 1}')
+    print(f'{outdir}: datavol.bin {at * BS} bytes ({at} of {blocks} blocks, {len(runs)} pieces), datavol.sh; {part} '
+          f'blocks {first}..{first + blocks - 1}')
     return [(b, c) for b, c in runs]
 
 
 def main():
-    if len(sys.argv) == 6 and sys.argv[1] == '--dd':
-        main_dd(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]))
+    if len(sys.argv) in (6, 7) and sys.argv[1] == '--dd':
+        main_dd(sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5]), *sys.argv[6:])
         return
     if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
