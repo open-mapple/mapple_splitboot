@@ -27,6 +27,7 @@
 #ifdef __linux__
 #include <dirent.h>
 #include <linux/blkpg.h>
+#include <linux/dm-ioctl.h>
 #include <linux/fs.h>
 #include <sys/ioctl.h>
 #else
@@ -109,32 +110,104 @@ static void pg(int fd, int op, uint64_t first, uint64_t last, int pno, int undo_
 	pg_journal[pg_n++] = (struct pg_undo){ fd, undo_op, pno, ufirst, ulast };
 }
 
-/* nothing may hold a partition that is zeroed or resized: no mount, no device-mapper on it */
+#ifdef __linux__
+/* a block device's "major:minor" (sysfs), or "" */
+static void sys_dev(const char *node, char *out, size_t n)
+{
+	char path[128];
+	FILE *f;
+
+	out[0] = 0;
+	snprintf(path, sizeof(path), "/sys/class/block/%s/dev", node);
+	if ((f = fopen(path, "r"))) {
+		if (fgets(out, (int)n, f))
+			out[strcspn(out, "\n")] = 0;
+		fclose(f);
+	}
+}
+
+/* where a device (by "major:minor") is mounted, from /proc/self/mountinfo's third field; 0 if nowhere */
+static int mounted(const char *dev, char *where, size_t n)
+{
+	char line[1024], mm[32], mp[512];
+	FILE *f = fopen("/proc/self/mountinfo", "r");
+	int found = 0;
+
+	if (!f)
+		die("/proc/self/mountinfo: %s", strerror(errno));
+	while (!found && fgets(line, sizeof(line), f))
+		if (sscanf(line, "%*s %*s %31s %*s %511s", mm, mp) == 2 && !strcmp(mm, dev)) {
+			snprintf(where, n, "%s", mp);
+			found = 1;
+		}
+	fclose(f);
+	return found;
+}
+
+/* a device-mapper device (dm-N) taken away by its name, as dmctl delete would; it must be unused */
+static void dm_remove(const char *dmnode, const char *on)
+{
+	char path[128], name[DM_NAME_LEN] = "";
+	struct dm_ioctl io;
+	FILE *f;
+	int fd;
+
+	snprintf(path, sizeof(path), "/sys/class/block/%s/dm/name", dmnode);
+	if (!(f = fopen(path, "r")) || !fgets(name, sizeof(name), f))
+		die("%s holds %s, and its device-mapper name could not be read", dmnode, on);
+	fclose(f);
+	name[strcspn(name, "\n")] = 0;
+	if ((fd = open("/dev/device-mapper", O_RDWR)) < 0)
+		die("/dev/device-mapper: %s (%s, %s, holds %s)", strerror(errno), dmnode, name, on);
+	memset(&io, 0, sizeof(io));
+	io.version[0] = DM_VERSION_MAJOR;
+	io.data_size = io.data_start = sizeof(io);
+	snprintf(io.name, sizeof(io.name), "%s", name);
+	if (ioctl(fd, DM_DEV_REMOVE, &io))
+		die("%s (%s) on %s could not be removed: %s; nothing written", dmnode, name, on, strerror(errno));
+	close(fd);
+	printf("  %s (%s, the recovery's mapping of %s) removed\n", dmnode, name, on);
+}
+#endif
+
+/*
+ * Nothing may use a partition that is zeroed or resized: not mounted, and nothing on it. An unmounted, unused
+ * device-mapper device on it (the recovery's decrypted /data, after the update-binary unmounted it) is removed;
+ * anything else, or a removal that fails, stops here with nothing written.
+ */
 static void unheld(const char *disk, int pno)
 {
 #ifdef __linux__
 	const char *base = strrchr(disk, '/') ? strrchr(disk, '/') + 1 : disk;
-	char path[256], node[64], line[512];
+	char path[256], node[64], dev[32], hdev[32], where[512];
 	DIR *d;
-	FILE *m;
 	struct dirent *e;
 
 	snprintf(node, sizeof(node), "%s%d", base, pno);
+	sys_dev(node, dev, sizeof(dev));
+	if (!dev[0])
+		die("%s: no such partition in sysfs", node);
+	if (mounted(dev, where, sizeof(where)))
+		die("%s is mounted at %s: unmount it first; nothing written", node, where);
 	snprintf(path, sizeof(path), "/sys/class/block/%s/holders", node);
+	if ((d = opendir(path))) {
+		while ((e = readdir(d))) {
+			if (e->d_name[0] == '.')
+				continue;
+			if (strncmp(e->d_name, "dm-", 3))
+				die("%s is held by %s: nothing written", node, e->d_name);
+			sys_dev(e->d_name, hdev, sizeof(hdev));
+			if (mounted(hdev, where, sizeof(where)))
+				die("%s (on %s) is mounted at %s: unmount it first; nothing written", e->d_name, node, where);
+			dm_remove(e->d_name, node);
+		}
+		closedir(d);
+	}
 	if ((d = opendir(path))) {
 		while ((e = readdir(d)))
 			if (e->d_name[0] != '.')
-				die("%s is held by %s: unmount it (reboot the recovery if that does not free it)", node, e->d_name);
+				die("%s is still held by %s: nothing written", node, e->d_name);
 		closedir(d);
-	}
-	if ((m = fopen("/proc/mounts", "r"))) {
-		size_t k = strlen(node);
-		while (fgets(line, sizeof(line), m)) {
-			const char *dev = strncmp(line, "/dev/block/", 11) ? line : line + 11;
-			if (!strncmp(dev, node, k) && dev[k] == ' ')
-				die("%s is mounted: %s", node, line);
-		}
-		fclose(m);
 	}
 #else
 	(void)disk, (void)pno;
