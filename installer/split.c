@@ -4,8 +4,8 @@
  * mapple-install's dual boot verbs (built in with -DMAPPLE_SPLIT; the core is build/mapple's mapple-install.h):
  *
  *   mapple-install split-carve DISK [--size GIB] [--check]
- *	xnusys (GIB, default 22) carved off the end of userdata; userdata's start, metadata, xnusys's first MiB and
- *	its saved area's header zeroed. Boot is not touched: the phone stays Android until split-chain.
+ *	xnusys (GIB, default 22) carved off the end of userdata; userdata's start, metadata, xnusys's first MiB, its
+ *	saved area's header and its last MiB (the boot-args record) zeroed. Boot is not touched: the phone stays Android until split-chain.
  *   mapple-install split-chain DISK BOOT LOADER PAYLOAD
  *	after the root is flashed (and checked with verify-root): boot kept in xnusys's saved area unless it carries
  *	the loader already (an Android update's boot is kept anew), then chained, and the chained image recorded
@@ -519,6 +519,7 @@ static int split_carve(int argc, char **argv)
 
 	zero(disk, xs * BS, MiB, "xnusys's first MiB");
 	zero(disk, (xe + 1) * BS - AREAS, MiB, "xnusys's saved header");
+	zero(disk, (xe + 1) * BS - MiB, MiB, "xnusys's last MiB (boot-args record)");
 	zero(disk, us * BS, ZERO_DATA, "userdata's start");
 	zero(disk, ms * BS, (me - ms + 1) * BS, "metadata");
 	forget();

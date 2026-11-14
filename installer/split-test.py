@@ -91,6 +91,7 @@ class Phone:
         self.set_boot(boot if boot else fake_boot(self.boot_n, b'A'))
         for name, n in (('metadata', MIB), ('userdata', 64 * MIB)):
             wr(self.disk, p[name][1] * BS, b'\xa5' * n)
+        wr(self.disk, (p['userdata'][2] + 1) * BS - MIB, b'MAPPLEBR' + b'\xa5' * (MIB - 8))  # a stale record
 
     def parts(self):
         return gpt_parts(rd(self.disk, 0, 64 * BS))
@@ -165,18 +166,18 @@ def main():
 
     ph.verb('carve', '--check')
     assert ph.tables() == stock_tables and ph.boot_img() == stock_boot, 'carve --check wrote something'
-    ph.fail_each('carve', 6)
+    ph.fail_each('carve', 7)
     p = ph.parts()
     u, x, m = p['userdata'], p['xnusys'], p['metadata']
     assert u[1] == stock_ud[1] and u[2] + 1 == x[1] and x[2] == stock_ud[2] and x[1] % 256 == 0
     assert 22 << 30 <= (x[2] - x[1] + 1) * BS < (22 << 30) + MIB, 'xnusys is not 22 GiB (and the alignment\'s rest)'
-    for off, n in ((x[1] * BS, MIB), ((x[2] + 1) * BS - AREAS, MIB), (u[1] * BS, 64 * MIB),
+    for off, n in ((x[1] * BS, MIB), ((x[2] + 1) * BS - AREAS, MIB), ((x[2] + 1) * BS - MIB, MIB), (u[1] * BS, 64 * MIB),
                    (m[1] * BS, (m[2] - m[1] + 1) * BS)):
         assert rd(ph.disk, off, n) == bytes(n), f'not zeroed at {off}'
     assert ph.boot_img() == stock_boot, 'carve touched boot'
     ph.verb('carve', ok=False)
     checks += 11
-    print(f'carve: put back at each of its 6 writes; then xnusys {x[1]}..{x[2]} at userdata\'s end, '
+    print(f'carve: put back at each of its 7 writes; then xnusys {x[1]}..{x[2]} at userdata\'s end, '
           f'zeroed as planned, boot untouched; refused once carved')
 
     ph.fail_each('chain', 4)
